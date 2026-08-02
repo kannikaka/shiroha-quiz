@@ -7494,7 +7494,7 @@ function renderPracticeQuestion(done=false){
   $('#practice-progress').textContent=`${Math.min(practice.idx+1,practice.items.length)} / ${practice.items.length}`;
   if(done||practice.idx>=practice.items.length){finishPractice();return}
   const item=currentPracticeItemV8916();const q=practiceQuestionV8916(item);const key=practiceItemKeyV8916(item);const bid=practiceItemBankIdV8916(item);const st=getPracticeAnswerStateV26(key);const fav=isFavoriteV27(q.id,bid);const groupTitle=practice.scopeType==='GROUP'?`${practice.scopeName} · 分组练习`:'刷题练习';
-  $('#practice-card').innerHTML=`<div class="practice-focus-head"><b>${esc(groupTitle)}</b><span>${practice.idx+1} / ${practice.items.length}</span><div class="practice-tools-v26"><button class="ghost mini-btn" id="p-favorite">${fav?'取消收藏':'收藏题目'}</button><button class="ghost mini-btn" id="p-exit">退出练习</button></div></div>${questionHtml(q,false)}<div class="actions practice-actions-v44"><button class="ghost" id="p-prev" ${practice.idx===0?'disabled':''}>上一题</button><button class="ghost" id="p-next">${practice.idx>=practice.items.length-1?'完成练习':'下一题'}</button><button class="primary" id="p-submit" ${st.answered||st.revealed?'disabled':''}>提交答案</button><button class="ghost" id="p-reveal" ${st.answered||st.revealed?'disabled':''}>看答案</button></div><div id="p-feedback"></div>${renderPracticeNavV26()}<aside class="practice-side-v31">${renderPracticeStatsV30()}</aside>`;
+  $('#practice-card').innerHTML=`<div class="practice-focus-head"><b>${esc(groupTitle)}</b><span>${practice.idx+1} / ${practice.items.length}</span><div class="practice-tools-v26"><button class="ghost mini-btn" id="p-favorite">${fav?'取消收藏':'收藏题目'}</button><button class="ghost mini-btn" id="p-edit">编辑题目</button><button class="ghost mini-btn" id="p-exit">退出练习</button></div></div>${questionHtml(q,false)}<div class="actions practice-actions-v44"><button class="ghost" id="p-prev" ${practice.idx===0?'disabled':''}>上一题</button><button class="ghost" id="p-next">${practice.idx>=practice.items.length-1?'完成练习':'下一题'}</button><button class="primary" id="p-submit" ${st.answered||st.revealed?'disabled':''}>提交答案</button><button class="ghost" id="p-reveal" ${st.answered||st.revealed?'disabled':''}>看答案</button></div><div id="p-feedback"></div>${renderPracticeNavV26()}<aside class="practice-side-v31">${renderPracticeStatsV30()}</aside>`;
   bindOptionSelect('#practice-card',q);applyAnswerStateV26('#practice-card',q,st.chosen||[]);bindPracticeBlankDraftV58914(q,key,st);if(st.answered||st.revealed)showAnsweredStateV26(q,st);
   $('#p-exit').onclick=()=>{if(confirm('退出本轮练习？已作答部分会保存为一条记录。'))finishPractice(true)};
   $('#p-favorite').onclick=()=>{toggleFavoriteV27(q.id,bid);renderPracticeQuestion()};
@@ -8184,6 +8184,311 @@ function cancelBankEditSessionV45(){
 /* SHIROHA_WEB_V45_BANK_EDITOR_AND_FOCUS_NAV_END */
 
 // Initialize only after every top-level lexical binding has been created.
+/* ─── 编辑题目功能 ─── */
+/* ─── 图片点击放大功能 ─── */
+(function() {
+  // 添加放大查看的样式
+  const style = document.createElement('style');
+  style.textContent = `
+    .analysis-img-wrap {
+      display: inline-block;
+      max-width: 100%;
+    }
+    .analysis-img-wrap img {
+      cursor: zoom-in;
+      transition: opacity 0.2s;
+      max-width: 100%;
+      height: auto;
+    }
+    .analysis-img-wrap img:hover {
+      opacity: 0.85;
+    }
+    #img-viewer-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 99999;
+      background: rgba(0, 0, 0, 0.75);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: zoom-out;
+      animation: imgViewerFadeIn 0.2s ease;
+    }
+    #img-viewer-overlay img {
+      max-width: 92vw;
+      max-height: 92vh;
+      border-radius: 8px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.3);
+      object-fit: contain;
+    }
+    @keyframes imgViewerFadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+  `;
+  document.head.appendChild(style);
+  
+  // 全局点击委托：监听图片点击放大
+  document.addEventListener('click', function(e) {
+    const img = e.target.closest('.analysis-img-wrap img, #p-feedback img, .practice-feedback img');
+    if (!img || e.target.closest('#edit-overlay')) return;
+    
+    const overlay = document.createElement('div');
+    overlay.id = 'img-viewer-overlay';
+    
+    const clone = document.createElement('img');
+    clone.src = img.src;
+    clone.alt = img.alt || '';
+    overlay.appendChild(clone);
+    
+    overlay.addEventListener('click', function() {
+      if (document.body.contains(overlay)) document.body.removeChild(overlay);
+    });
+    
+    // ESC 键关闭
+    const escHandler = function(ev) {
+      if (ev.key === 'Escape' && document.body.contains(overlay)) {
+        document.body.removeChild(overlay);
+        document.removeEventListener('keydown', escHandler);
+      }
+    };
+    document.addEventListener('keydown', escHandler);
+    
+    document.body.appendChild(overlay);
+  });
+  
+  // 监听 DOM 变化，给新出现的图片包裹放大容器
+  const observer = new MutationObserver(function() {
+    document.querySelectorAll('#p-feedback img:not(.img-viewer-bound), .practice-feedback img:not(.img-viewer-bound)').forEach(function(img) {
+      if (img.closest('#edit-overlay')) return;
+      img.classList.add('img-viewer-bound');
+      img.style.cursor = 'zoom-in';
+    });
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+})();
+function openEditDialog() {
+  try {
+    const item = currentPracticeItemV8916();
+    if (!item) { toast('没有当前题目', 'warn'); return; }
+    const q = practiceQuestionV8916(item);
+    if (!q) { toast('题目数据异常', 'warn'); return; }
+    
+    window.__editCtx = { item, q };
+    
+    const esc = v => String(v ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]);
+    
+    let optionsHtml = '';
+    if (Array.isArray(q.options) && q.options.length) {
+      optionsHtml = q.options.map((o, i) => `
+        <div style="display:flex;align-items:center;gap:8px;margin:6px 0;">
+          <span style="font-weight:600;min-width:24px;">${esc(o.key)}.</span>
+          <textarea class="edit-opt-text" data-opt-index="${i}" style="flex:1;padding:6px 10px;border:1px solid #ccc;border-radius:6px;font-size:14px;resize:vertical;" rows="2">${esc(o.text)}</textarea>
+        </div>
+      `).join('');
+    }
+    
+    const answerStr = Array.isArray(q.answer) ? q.answer.join(' / ') : String(q.answer || '');
+    
+    const overlay = document.createElement('div');
+    overlay.id = 'edit-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;';
+    
+    overlay.innerHTML = `
+      <div style="background:#fff;border-radius:16px;padding:24px;max-width:700px;width:92%;max-height:85vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,.18);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+          <h3 style="margin:0;font-size:18px;">编辑题目</h3>
+          <button onclick="this.closest('#edit-overlay').remove()" style="background:none;border:none;font-size:22px;cursor:pointer;padding:4px 8px;">&times;</button>
+        </div>
+        <label style="display:block;margin:8px 0 4px;font-weight:600;">题干</label>
+        <textarea class="edit-field-question" style="width:100%;padding:8px 12px;border:1px solid #ccc;border-radius:8px;font-size:14px;resize:vertical;min-height:80px;box-sizing:border-box;">${esc(q.question)}</textarea>
+        ${optionsHtml ? `<label style="display:block;margin:12px 0 4px;font-weight:600;">选项</label>${optionsHtml}` : ''}
+        <label style="display:block;margin:12px 0 4px;font-weight:600;">答案${q.type === 'short' ? '（参考答案）' : ''}</label>
+        <textarea id="edit-answer" style="width:100%;padding:8px 12px;border:1px solid #ccc;border-radius:8px;font-size:14px;resize:vertical;min-height:50px;box-sizing:border-box;">${esc(answerStr)}</textarea>
+        <label style="display:block;margin:12px 0 4px;font-weight:600;">解析（可选）</label>
+        <div style="display:flex;gap:8px;margin-bottom:6px;">
+          <button onclick="insertImageToAnalysis()" style="padding:6px 14px;border:1px solid #4a90d9;border-radius:6px;background:#fff;color:#4a90d9;cursor:pointer;font-size:13px;">插入图片</button>
+          <span style="font-size:12px;color:#888;align-self:center;">支持 PNG / JPG，插入后显示为 Markdown 图片</span>
+        </div>
+        <textarea class="edit-field-analysis" style="width:100%;padding:8px 12px;border:1px solid #ccc;border-radius:8px;font-size:14px;resize:vertical;min-height:100px;box-sizing:border-box;">${esc(q.analysis || '')}</textarea>
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px;">
+          <button onclick="this.closest('#edit-overlay').remove()" style="padding:8px 20px;border:1px solid #ccc;border-radius:8px;background:#f5f5f5;cursor:pointer;font-size:14px;">取消</button>
+          <button onclick="doSaveEdit()" style="padding:8px 24px;border:none;border-radius:8px;background:#4a90d9;color:#fff;cursor:pointer;font-size:14px;font-weight:600;">保存修改</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+  } catch(e) {
+    toast('编辑功能异常：' + e.message, 'danger');
+  }
+}
+
+/* ─── 插入图片到解析框 ─── */
+window.insertImageToAnalysis = function() {
+  const overlay = document.getElementById('edit-overlay');
+  if (!overlay) return;
+  
+  // 先尝试读取剪贴板
+  if (navigator.clipboard && navigator.clipboard.read) {
+    navigator.clipboard.read().then(function(clipboardItems) {
+      let found = false;
+      clipboardItems.forEach(function(item) {
+        // 查找图片类型的剪贴板项
+        for (const type of item.types) {
+          if (type.startsWith('image/')) {
+            found = true;
+            item.getType(type).then(function(blob) {
+              // 限制大小 2MB
+              if (blob.size > 2 * 1024 * 1024) {
+                toast('图片过大，请压缩后重试（建议 2MB 以内）', 'warn');
+                return;
+              }
+              const reader = new FileReader();
+              reader.onload = function(e) {
+                insertImageDataUrl(overlay, e.target.result, '剪贴板图片');
+              };
+              reader.readAsDataURL(blob);
+            }).catch(function() {
+              toast('读取剪贴板图片失败', 'danger');
+            });
+            return;
+          }
+        }
+      });
+      if (!found) {
+        toast('剪贴板中没有图片，已切换为文件选择模式', 'warn');
+        openFilePicker(overlay);
+      }
+    }).catch(function() {
+      // 剪贴板读取失败（权限不足或浏览器不支持），回退到文件选择
+      toast('无法读取剪贴板（需要 HTTPS 或本地环境），已切换为文件选择', 'warn');
+      openFilePicker(overlay);
+    });
+  } else {
+    // 浏览器不支持剪贴板 API，回退到文件选择
+    openFilePicker(overlay);
+  }
+};
+
+// 文件选择模式（兜底方案）
+function openFilePicker(overlay) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/png,image/jpeg,image/jpg,image/gif,image/webp';
+  input.style.display = 'none';
+  document.body.appendChild(input);
+  
+  input.onchange = function() {
+    const file = input.files && input.files[0];
+    if (!file) { document.body.removeChild(input); return; }
+    
+    if (file.size > 2 * 1024 * 1024) {
+      toast('图片过大，请压缩后重试（建议 2MB 以内）', 'warn');
+      document.body.removeChild(input);
+      return;
+    }
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      insertImageDataUrl(overlay, e.target.result, file.name);
+      document.body.removeChild(input);
+    };
+    reader.onerror = function() {
+      toast('图片读取失败', 'danger');
+      document.body.removeChild(input);
+    };
+    reader.readAsDataURL(file);
+  };
+  
+  input.click();
+}
+
+// 将 Base64 图片插入到解析框光标位置
+function insertImageDataUrl(overlay, dataUrl, fileName) {
+  const analysisEl = overlay.querySelector('.edit-field-analysis');
+  if (!analysisEl) return;
+  
+  const cursorPos = analysisEl.selectionStart || analysisEl.value.length;
+  const before = analysisEl.value.substring(0, cursorPos);
+  const after = analysisEl.value.substring(cursorPos);
+  const safeName = fileName.replace(/[\[\]()]/g, '').replace(/\.[^.]+$/, '') || '图片';
+  const imgMarkdown = '\n![' + safeName + '](' + dataUrl + ')\n';
+  analysisEl.value = before + imgMarkdown + after;
+  analysisEl.focus();
+  analysisEl.selectionStart = analysisEl.selectionEnd = cursorPos + imgMarkdown.length;
+  
+  toast('图片已插入到解析框', 'ok');
+}
+
+window.doSaveEdit = function() {
+  try {
+    const ctx = window.__editCtx;
+    if (!ctx) { toast('编辑上下文丢失，请重新打开', 'warn'); return; }
+    const { item, q } = ctx;
+    
+    const overlay = document.getElementById('edit-overlay');
+    if (!overlay) { toast('弹窗已关闭', 'warn'); return; }
+    
+    const questionEl = overlay.querySelector('.edit-field-question');
+    if (!questionEl) { toast('未找到题干输入框', 'warn'); return; }
+    
+    const newQuestion = questionEl.value.trim();
+    if (!newQuestion) { toast('题干不能为空', 'warn'); return; }
+    
+    q.question = newQuestion;
+    
+    if (Array.isArray(q.options) && q.options.length) {
+      const optEls = overlay.querySelectorAll('.edit-opt-text');
+      q.options.forEach((o, i) => {
+        if (optEls[i]) o.text = optEls[i].value.trim() || o.key;
+      });
+    }
+    
+    const answerEl = document.getElementById('edit-answer');
+    if (answerEl) {
+      const newAnswer = answerEl.value.trim();
+      if (newAnswer) {
+        q.answer = newAnswer.split(/[／/、;；]/).map(s => s.trim()).filter(Boolean);
+      } else {
+        q.answer = [];
+      }
+    }
+    
+    const analysisEl = overlay.querySelector('.edit-field-analysis');
+    if (analysisEl) q.analysis = analysisEl.value.trim() || '';
+    
+    const bid = practiceItemBankIdV8916(item);
+    const bank = state.banks.find(b => b.id === bid);
+    if (bank) {
+      const src = bank.questions.find(x => x.id === q.id);
+      if (src) {
+        src.question = q.question;
+        src.answer = [...q.answer];
+        src.analysis = q.analysis;
+        if (Array.isArray(q.options)) {
+          src.options = q.options.map(o => ({key: o.key, text: o.text}));
+        }
+        try {
+          localStorage.setItem('shiroha-quiz-state', JSON.stringify(state));
+        } catch(e) {}
+      }
+    }
+    
+    overlay.remove();
+    toast('题目已更新', 'ok');
+    renderPracticeQuestion();
+  } catch(e) {
+    toast('保存失败：' + e.message, 'danger');
+  }
+};
+
+// 事件委托监听编辑按钮
+document.addEventListener('click', function(e) {
+  if (e.target && e.target.id === 'p-edit') {
+    e.preventDefault();
+    openEditDialog();
+  }
+});
 init();
 
 })();
